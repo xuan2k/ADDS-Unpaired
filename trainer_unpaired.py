@@ -373,7 +373,6 @@ class TrainerUnpaired:
             if self.opt.only_depth_encoder:
                 losses.backward()
             else:
-                loss_G = losses + losses_day["loss"] + losses_night["loss"] + domain_loss_G
                 if self.opt.feature_disc:
                     for i_layer in range(self.opt.num_discriminator):
                         for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
@@ -381,7 +380,7 @@ class TrainerUnpaired:
                 else:
                     for param in self.discriminator["domain_classifier"].parameters():
                         param.requires_grad = False
-                loss_G.backward()
+                domain_loss_G.backward()
                 
                 if self.opt.feature_disc:
                     for i_layer in range(self.opt.num_discriminator):
@@ -392,6 +391,8 @@ class TrainerUnpaired:
                         param.requires_grad = True
 
                 domain_loss_D.backward()
+                loss = losses + losses_day["loss"] + losses_night["loss"]
+                loss.backward()
 
             self.model_optimizer.step()
             self.model_optimizer_D.step()
@@ -491,8 +492,8 @@ class TrainerUnpaired:
             total_G_loss = 0
             if self.opt.feature_disc:
                 for i_layer in range(self.opt.num_discriminator):
-                    night_feature = night_features[-(i_layer + 1)]
-                    day_feature = day_features[-(i_layer + 1)]
+                    night_feature = night_features[-(i_layer + 1)].detach()
+                    day_feature = day_features[-(i_layer + 1)].detach()
                     predict_day = self.discriminator["domain_classifier_{}".format(i_layer)](day_feature)
                     predict_night = self.discriminator["domain_classifier_{}".format(i_layer)](night_feature)
                     D_loss, G_loss = None, None
@@ -527,8 +528,8 @@ class TrainerUnpaired:
             losses_night = self.compute_losses(night_inputs, night_outputs)
 
             if not self.opt.feature_disc:
-                day_pred = day_outputs[('disp', 0)]
-                night_pred = night_outputs[('disp', 0)]
+                day_pred = day_outputs[('disp', 0)].detach()
+                night_pred = night_outputs[('disp', 0)].detach()
                 predict_day = self.discriminator["domain_classifier"](F.softmax(day_pred, dim=1))
                 predict_night = self.discriminator["domain_classifier"](F.softmax(night_pred, dim=1))
 
