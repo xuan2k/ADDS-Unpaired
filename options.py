@@ -84,6 +84,9 @@ class MonodepthOptions:
         self.parser.add_argument("--unpaired",
                                  default=False,
                                  help="train unpaired with invariant features discriminator")
+        self.parser.add_argument("--feature_disc",
+                                 default=True,
+                                 help="discriminator apply on feature or depth")
         self.parser.add_argument("--num_discriminator",
                                  type=int,
                                  help="Number of layer apply discriminator",
