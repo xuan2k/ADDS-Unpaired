@@ -264,7 +264,7 @@ class TrainerUnpaired:
         self.loss_ortho = OrthoLoss().cuda()
         self.loss_recon1 = MSE().cuda()
         self.loss_recon2 = SIMSE().cuda()
-        self.domain_loss = torch.nn.MSELoss().cuda()
+        self.domain_loss = torch.nn.MSELoss(reduction='mean').cuda()
         self.target_label = 1
         self.source_label = 0
 
