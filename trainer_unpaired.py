@@ -367,21 +367,24 @@ class TrainerUnpaired:
 
             outputs_day, outputs_night, losses, losses_day, losses_night, domain_loss_D, domain_loss_G = self.process_batch(day_inputs, night_inputs)
 
+            self.model_optimizer.zero_grad()
+            self.model_optimizer_D.zero_grad()
+
             if self.opt.only_depth_encoder:
                 losses.backward()
             else:
-                loss_G = losses + losses_day["loss"] + losses_night["loss"] + domain_loss_G
                 for i_layer in range(self.opt.num_discriminator):
                     for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
                         param.requires_grad = False
-                loss_G.backward()
+                domain_loss_G.backward()
                 
                 for i_layer in range(self.opt.num_discriminator):
                     for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
                         param.requires_grad = True
 
-                loss_D = domain_loss_D
-                loss_D.backward()
+                domain_loss_D.backward()
+                loss = losses + losses_day["loss"] + losses_night["loss"]
+                loss.backward()
 
             self.model_optimizer.step()
             self.model_optimizer_D.step()
