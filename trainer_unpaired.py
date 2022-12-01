@@ -217,7 +217,7 @@ class TrainerUnpaired:
 
         val_day_dataset = self.dataset(self.opt,
             self.opt.data_path, val_day_filenames, self.opt.height, self.opt.width,
-            [0], 4, is_train=False, img_ext=img_ext)
+            [0], 4, is_train=False, img_ext='.png')
         self.val_day_loader = DataLoader(
             val_day_dataset, self.opt.batch_size, False,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=False)
@@ -226,7 +226,7 @@ class TrainerUnpaired:
 
         val_night_dataset = self.dataset(self.opt,
             self.opt.data_path, val_night_filenames, self.opt.height, self.opt.width,
-            [0], 4, is_train=False, img_ext=img_ext)
+            [0], 4, is_train=False, img_ext='.png')
         self.val_night_loader = DataLoader(
             val_night_dataset, self.opt.batch_size, False,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=False)
@@ -374,13 +374,21 @@ class TrainerUnpaired:
                 losses.backward()
             else:
                 loss_G = losses + losses_day["loss"] + losses_night["loss"] + domain_loss_G
-                for i_layer in range(self.opt.num_discriminator):
-                    for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
+                if self.opt.feature_disc:
+                    for i_layer in range(self.opt.num_discriminator):
+                        for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
+                            param.requires_grad = False
+                else:
+                    for param in self.discriminator["domain_classifier"].parameters():
                         param.requires_grad = False
                 loss_G.backward()
                 
-                for i_layer in range(self.opt.num_discriminator):
-                    for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
+                if self.opt.feature_disc:
+                    for i_layer in range(self.opt.num_discriminator):
+                        for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
+                            param.requires_grad = True
+                else:
+                    for param in self.discriminator["domain_classifier"].parameters():
                         param.requires_grad = True
 
                 domain_loss_D.backward()
