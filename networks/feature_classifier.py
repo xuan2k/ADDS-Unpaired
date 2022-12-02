@@ -1,57 +1,47 @@
-import torch
-import torch.nn as nn
-import functools
+from torch import nn
+from torch.autograd import Function
 
-class NLayerDiscriminator(nn.Module):
-    """Defines a PatchGAN discriminator"""
 
-    def __init__(self, 
-                 input_nc, 
-                 ndf=64, 
-                 n_layers=3, 
-                 norm_layer=nn.InstanceNorm2d,
-                 kernel_size = 3,
-                 padding = 1,
-                 stride = 2
-                 ):
-        """Construct a PatchGAN discriminator
-        Parameters:
-            input_nc (int)  -- the number of channels in input images
-            ndf (int)       -- the number of filters in the last conv layer
-            n_layers (int)  -- the number of conv layers in the discriminator
-            norm_layer      -- normalization layer
-        """
-        super(NLayerDiscriminator, self).__init__()
-        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
-            use_bias = norm_layer.func == nn.InstanceNorm2d
-        else:
-            use_bias = norm_layer == nn.InstanceNorm2d
+# from the authors of https://github.com/Yangyangii/DANN-pytorch
+class GradientReversalLayer(Function):
 
-        kw = kernel_size
-        padw = padding
-        sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=stride, padding=padw), nn.LeakyReLU(0.2, True)]
-        nf_mult = 1
-        nf_mult_prev = 1
-        for n in range(1, n_layers):  # gradually increase the number of filters
-            nf_mult_prev = nf_mult
-            nf_mult = min(2 ** n, 8)
-            sequence += [
-                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=stride, padding=padw, bias=use_bias),
-                norm_layer(ndf * nf_mult),
-                nn.LeakyReLU(0.2, True)
-            ]
+    @staticmethod
+    def forward(ctx, x, lambda_):
+        ctx.alpha = lambda_
 
-        nf_mult_prev = nf_mult
-        nf_mult = min(2 ** n_layers, 8)
-        sequence += [
-            nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
-            norm_layer(ndf * nf_mult),
-            nn.LeakyReLU(0.2, True)
-        ]
+        return x.view_as(x)
 
-        sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
-        self.model = nn.Sequential(*sequence)
+    @staticmethod
+    def backward(ctx, grad):
+        output = grad.neg() * ctx.alpha
 
-    def forward(self, input):
-        """Standard forward."""
-        return torch.sigmoid(self.model(input))
+        return output, None
+
+
+class FeatureClassifier(nn.Module):
+    def __init__(self, in_channel=512, width=512, height=256, batch_size=8):
+        super(FeatureClassifier, self).__init__()
+        self.width = width
+        self.height = height
+        self.batch_size = batch_size
+        self.down = nn.Conv2d(in_channel, 128, 5, 2, padding=2, bias=False)
+        self.relu0 = nn.ReLU(True)
+        self.fc1 = nn.Linear(int((128 * (width / 8) * (height / 8))), 100)
+        self.bn1 = nn.BatchNorm1d(100)
+        self.relu1 = nn.ReLU(True)
+        self.fc2 = nn.Linear(100, 2)
+        self.soft = nn.LogSoftmax(dim=1)
+
+    def forward(self, feature, lambda_=1):
+        feature = GradientReversalLayer.apply(feature, lambda_)
+
+        feat = self.down(feature)
+        feat = self.relu0(feat)
+        feat = feat.view(-1, int(128 * (self.width / 8) * (self.height / 8)))
+        feat = self.fc1(feat)
+        feat = self.bn1(feat)
+        feat = self.relu1(feat)
+        feat = self.fc2(feat)
+        domain_output = self.soft(feat)
+
+        return domain_output

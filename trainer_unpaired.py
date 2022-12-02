@@ -144,14 +144,10 @@ class TrainerUnpaired:
         self.discriminator = {}
 
         if self.opt.feature_disc:
-            self.parameters_to_train_D = []
-            num_ch_enc = np.flip(self.models["encoder"].num_ch_enc)
-            for i_layer in range(self.opt.num_discriminator):
-                self.discriminator["domain_classifier_{}".format(i_layer)] = \
-                    networks.NLayerDiscriminator(num_ch_enc[i_layer])
-                self.discriminator["domain_classifier_{}".format(i_layer)].train()
-                self.discriminator["domain_classifier_{}".format(i_layer)].to(self.device)
-                self.parameters_to_train_D += list(self.discriminator["domain_classifier_{}".format(i_layer)].parameters())
+            self.discriminator["domain_classifier"] = networks.FeatureClassifier(batch_size=self.opt.batch_size)
+            self.discriminator["domain_classifier"].train()
+            self.discriminator["domain_classifier"].to(self.device)
+            self.parameters_to_train_D = list(self.discriminator["domain_classifier"].parameters())
         else:
             self.discriminator["domain_classifier"] = networks.FCDiscriminator(num_classes=1)
             self.discriminator["domain_classifier"].train()
@@ -264,7 +260,8 @@ class TrainerUnpaired:
         self.loss_ortho = OrthoLoss().cuda()
         self.loss_recon1 = MSE().cuda()
         self.loss_recon2 = SIMSE().cuda()
-        self.domain_loss = torch.nn.MSELoss(reduction='mean').cuda()
+        self.domain_depth_loss = torch.nn.MSELoss(reduction='mean').cuda()
+        self.domain_feat_loss = torch.nn.NLLLoss().cuda()
         self.target_label = 1
         self.source_label = 0
 
@@ -374,22 +371,12 @@ class TrainerUnpaired:
                 losses.backward()
             else:
                 loss_G = losses + losses_day["loss"] + losses_night["loss"] + domain_loss_G
-                if self.opt.feature_disc:
-                    for i_layer in range(self.opt.num_discriminator):
-                        for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
-                            param.requires_grad = False
-                else:
-                    for param in self.discriminator["domain_classifier"].parameters():
-                        param.requires_grad = False
+                for param in self.discriminator["domain_classifier"].parameters():
+                    param.requires_grad = False
                 loss_G.backward()
                 
-                if self.opt.feature_disc:
-                    for i_layer in range(self.opt.num_discriminator):
-                        for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
-                            param.requires_grad = True
-                else:
-                    for param in self.discriminator["domain_classifier"].parameters():
-                        param.requires_grad = True
+                for param in self.discriminator["domain_classifier"].parameters():
+                    param.requires_grad = True
 
                 domain_loss_D.backward()
 
@@ -490,32 +477,32 @@ class TrainerUnpaired:
             total_D_loss = 0
             total_G_loss = 0
             if self.opt.feature_disc:
-                for i_layer in range(self.opt.num_discriminator):
-                    night_feature = night_features[-(i_layer + 1)]
-                    day_feature = day_features[-(i_layer + 1)]
-                    predict_day = self.discriminator["domain_classifier_{}".format(i_layer)](day_feature)
-                    predict_night = self.discriminator["domain_classifier_{}".format(i_layer)](night_feature)
-                    D_loss, G_loss = None, None
-                    # day = 1, night = 0
-                    label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
-                    label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                    G_loss = self.domain_loss(predict_day, label_source)
-                    G_loss += self.domain_loss(predict_night, label_target)
+                day_pred = day_features[-1]
+                night_pred = night_features[-1]
+                predict_day = self.discriminator["domain_classifier"](day_pred)
+                predict_night = self.discriminator["domain_classifier"](night_pred)
 
-                    night_feature = night_features[-(i_layer + 1)].detach()
-                    day_feature = day_features[-(i_layer + 1)].detach()
-                    predict_day = self.discriminator["domain_classifier_{}".format(i_layer)](day_feature)
-                    predict_night = self.discriminator["domain_classifier_{}".format(i_layer)](night_feature)
+                D_loss, G_loss = None, None
+                # day = 1, night = 0
+                label_source = torch.FloatTensor(np.zeros(self.opt.batch_size)).to(self.device)
+                label_target = torch.FloatTensor(np.ones(self.opt.batch_size)).to(self.device)
+                G_loss = self.domain_feat_loss(predict_day, label_source)
+                G_loss += self.domain_feat_loss(predict_night, label_target)
 
-                    label_source = torch.FloatTensor(predict_night.data.size()).fill_(self.source_label).to(self.device)
-                    label_target = torch.FloatTensor(predict_day.data.size()).fill_(self.target_label).to(self.device)
-                    D_loss = self.domain_loss(predict_day, label_target)
-                    D_loss += self.domain_loss(predict_night, label_source)
+                day_pred = day_outputs[('disp', 0)].detach()
+                night_pred = night_outputs[('disp', 0)].detach()
+                predict_day = self.discriminator["domain_classifier"](F.softmax(day_pred, dim=1))
+                predict_night = self.discriminator["domain_classifier"](F.softmax(night_pred, dim=1))
 
-                    total_D_loss += D_loss * (self.opt.num_discriminator - i_layer)
-                    total_G_loss += G_loss
-                    domain_loss_D += total_D_loss
-                    domain_loss_G += total_G_loss
+                label_source = torch.FloatTensor(np.zeros(self.opt.batch_size)).to(self.device)
+                label_target = torch.FloatTensor(np.ones(self.opt.batch_size)).to(self.device)
+                D_loss = self.domain_feat_loss(predict_day, label_target)
+                D_loss += self.domain_feat_loss(predict_night, label_source)
+
+                total_D_loss += D_loss
+                total_G_loss += G_loss
+                domain_loss_D += total_D_loss
+                domain_loss_G += total_G_loss
             
             day_outputs.update(self.predict_poses(day_inputs, day_features))
             night_outputs.update(self.predict_poses(night_inputs, night_features))
@@ -536,8 +523,8 @@ class TrainerUnpaired:
                 # day = 1, night = 0
                 label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
                 label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                G_loss = self.domain_loss(predict_day, label_source)
-                G_loss += self.domain_loss(predict_night, label_target)
+                G_loss = self.domain_depth_loss(predict_day, label_source)
+                G_loss += self.domain_depth_loss(predict_night, label_target)
 
                 day_pred = day_outputs[('disp', 0)].detach()
                 night_pred = night_outputs[('disp', 0)].detach()
@@ -546,8 +533,8 @@ class TrainerUnpaired:
 
                 label_source = torch.FloatTensor(predict_night.data.size()).fill_(self.source_label).to(self.device)
                 label_target = torch.FloatTensor(predict_day.data.size()).fill_(self.target_label).to(self.device)
-                D_loss = self.domain_loss(predict_day, label_target)
-                D_loss += self.domain_loss(predict_night, label_source)
+                D_loss = self.domain_depth_loss(predict_day, label_target)
+                D_loss += self.domain_depth_loss(predict_night, label_source)
 
                 total_D_loss += D_loss
                 total_G_loss += G_loss
