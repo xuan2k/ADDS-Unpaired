@@ -489,10 +489,10 @@ class TrainerUnpaired:
                 G_loss = self.domain_feat_loss(predict_day, label_source)
                 G_loss += self.domain_feat_loss(predict_night, label_target)
 
-                day_pred = day_outputs[('disp', 0)].detach()
-                night_pred = night_outputs[('disp', 0)].detach()
-                predict_day = self.discriminator["domain_classifier"](F.softmax(day_pred, dim=1))
-                predict_night = self.discriminator["domain_classifier"](F.softmax(night_pred, dim=1))
+                day_pred = day_features[-1].detach()
+                night_pred = night_features[-1].detach()
+                predict_day = self.discriminator["domain_classifier"](day_pred)
+                predict_night = self.discriminator["domain_classifier"](night_pred)
 
                 label_source = torch.FloatTensor(np.zeros(self.opt.batch_size)).to(self.device)
                 label_target = torch.FloatTensor(np.ones(self.opt.batch_size)).to(self.device)

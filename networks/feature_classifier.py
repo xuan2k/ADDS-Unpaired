@@ -19,7 +19,7 @@ class GradientReversalLayer(Function):
 
 
 class FeatureClassifier(nn.Module):
-    def __init__(self, in_channel=512, width=512, height=256, batch_size=8):
+    def __init__(self, in_channel=512, width=16, height=8, batch_size=8):
         super(FeatureClassifier, self).__init__()
         self.width = width
         self.height = height
