@@ -26,10 +26,10 @@ class FeatureClassifier(nn.Module):
         self.batch_size = batch_size
         self.down = nn.Conv2d(in_channel, 128, 5, 2, padding=2, bias=False)
         self.relu0 = nn.ReLU(True)
-        self.fc1 = nn.Linear(int((128 * (width / 8) * (height / 8))), 100)
-        self.bn1 = nn.BatchNorm1d(100)
+        self.fc1 = nn.Linear(int((128 * (width / 8) * (height / 8))), 64)
+        self.bn1 = nn.BatchNorm1d(64)
         self.relu1 = nn.ReLU(True)
-        self.fc2 = nn.Linear(100, 2)
+        self.fc2 = nn.Linear(64, 1)
         self.soft = nn.LogSoftmax(dim=1)
 
     def forward(self, feature, lambda_=1):

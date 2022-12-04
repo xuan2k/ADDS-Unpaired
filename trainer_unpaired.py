@@ -261,7 +261,7 @@ class TrainerUnpaired:
         self.loss_recon1 = MSE().cuda()
         self.loss_recon2 = SIMSE().cuda()
         self.domain_depth_loss = torch.nn.MSELoss(reduction='mean').cuda()
-        self.domain_feat_loss = torch.nn.NLLLoss().cuda()
+        self.domain_feat_loss = torch.nn.MSELoss(reduction='mean').cuda()
         self.target_label = 1
         self.source_label = 0
 
@@ -474,18 +474,16 @@ class TrainerUnpaired:
         if self.use_pose_net and not self.opt.only_depth_encoder:
             domain_loss_D = 0
             domain_loss_G = 0
-            total_D_loss = 0
-            total_G_loss = 0
             if self.opt.feature_disc:
                 day_pred = day_features[-1]
                 night_pred = night_features[-1]
                 predict_day = self.discriminator["domain_classifier"](day_pred)
                 predict_night = self.discriminator["domain_classifier"](night_pred)
 
-                D_loss, G_loss = None, None
+                D_loss, G_loss = 0, 0
                 # day = 1, night = 0
-                label_source = torch.FloatTensor(np.zeros(self.opt.batch_size)).to(self.device)
-                label_target = torch.FloatTensor(np.ones(self.opt.batch_size)).to(self.device)
+                label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
+                label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
                 G_loss = self.domain_feat_loss(predict_day, label_source)
                 G_loss += self.domain_feat_loss(predict_night, label_target)
 
@@ -494,15 +492,11 @@ class TrainerUnpaired:
                 predict_day = self.discriminator["domain_classifier"](day_pred)
                 predict_night = self.discriminator["domain_classifier"](night_pred)
 
-                label_source = torch.FloatTensor(np.zeros(self.opt.batch_size)).to(self.device)
-                label_target = torch.FloatTensor(np.ones(self.opt.batch_size)).to(self.device)
                 D_loss = self.domain_feat_loss(predict_day, label_target)
                 D_loss += self.domain_feat_loss(predict_night, label_source)
 
-                total_D_loss += D_loss
-                total_G_loss += G_loss
-                domain_loss_D += total_D_loss
-                domain_loss_G += total_G_loss
+                domain_loss_D += D_loss
+                domain_loss_G += G_loss
             
             day_outputs.update(self.predict_poses(day_inputs, day_features))
             night_outputs.update(self.predict_poses(night_inputs, night_features))
@@ -510,16 +504,13 @@ class TrainerUnpaired:
             self.generate_images_pred(day_inputs, day_outputs)
             self.generate_images_pred(night_inputs, night_outputs)
 
-            losses_day = self.compute_losses(day_inputs, day_outputs)
-            losses_night = self.compute_losses(night_inputs, night_outputs)
-
             if not self.opt.feature_disc:
                 day_pred = day_outputs[('disp', 0)]
                 night_pred = night_outputs[('disp', 0)]
-                predict_day = self.discriminator["domain_classifier"](F.softmax(day_pred, dim=1))
-                predict_night = self.discriminator["domain_classifier"](F.softmax(night_pred, dim=1))
+                predict_day = self.discriminator["domain_classifier"](F.sigmoid(day_pred, dim=1))
+                predict_night = self.discriminator["domain_classifier"](F.sigmoid(night_pred, dim=1))
 
-                D_loss, G_loss = None, None
+                D_loss, G_loss = 0, 0
                 # day = 1, night = 0
                 label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
                 label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
@@ -528,18 +519,17 @@ class TrainerUnpaired:
 
                 day_pred = day_outputs[('disp', 0)].detach()
                 night_pred = night_outputs[('disp', 0)].detach()
-                predict_day = self.discriminator["domain_classifier"](F.softmax(day_pred, dim=1))
-                predict_night = self.discriminator["domain_classifier"](F.softmax(night_pred, dim=1))
+                predict_day = self.discriminator["domain_classifier"](F.sigmoid(day_pred, dim=1))
+                predict_night = self.discriminator["domain_classifier"](F.sigmoid(night_pred, dim=1))
 
-                label_source = torch.FloatTensor(predict_night.data.size()).fill_(self.source_label).to(self.device)
-                label_target = torch.FloatTensor(predict_day.data.size()).fill_(self.target_label).to(self.device)
                 D_loss = self.domain_depth_loss(predict_day, label_target)
                 D_loss += self.domain_depth_loss(predict_night, label_source)
 
-                total_D_loss += D_loss
-                total_G_loss += G_loss
-                domain_loss_D += total_D_loss
-                domain_loss_G += total_G_loss
+                domain_loss_D += D_loss
+                domain_loss_G += G_loss
+            
+            losses_day = self.compute_losses(day_inputs, day_outputs)
+            losses_night = self.compute_losses(night_inputs, night_outputs)
                 
         loss = 0
         losses = []
