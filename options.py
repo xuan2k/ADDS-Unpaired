@@ -90,8 +90,8 @@ class MonodepthOptions:
         self.parser.add_argument("--num_discriminator",
                                  type=int,
                                  help="Number of layer apply discriminator",
-                                 default=1,
-                                 choices=[1, 2, 3, 4])
+                                 default=0,
+                                 choices=[0, 1, 2, 3, 4])
         self.parser.add_argument("--smooth_domain_label",
                                  help="if set, smooth domain label into 0.1, 0.9",
                                  action="store_true")

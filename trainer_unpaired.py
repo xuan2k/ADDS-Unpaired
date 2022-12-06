@@ -144,10 +144,19 @@ class TrainerUnpaired:
         self.discriminator = {}
 
         if self.opt.feature_disc:
-            self.discriminator["domain_classifier"] = networks.FeatureClassifier(batch_size=self.opt.batch_size)
-            self.discriminator["domain_classifier"].train()
-            self.discriminator["domain_classifier"].to(self.device)
-            self.parameters_to_train_D = list(self.discriminator["domain_classifier"].parameters())
+            if self.opt.num_discriminator == 0:
+                self.discriminator["domain_classifier"] = networks.FeatureClassifier(batch_size=self.opt.batch_size)
+                self.discriminator["domain_classifier"].train()
+                self.discriminator["domain_classifier"].to(self.device)
+                self.parameters_to_train_D = list(self.discriminator["domain_classifier"].parameters())
+            else:
+                num_ch_enc = np.flip(self.models["encoder"].num_ch_enc)
+                self.parameters_to_train_D = []
+                for i_layer in range(self.opt.num_discriminator):
+                    self.models["domain_classifier_{}".format(i_layer)] = \
+                        networks.NLayerDiscriminator(num_ch_enc[i_layer])
+                    self.models["domain_classifier_{}".format(i_layer)].to(self.device)
+                    self.parameters_to_train_D += list(self.models["domain_classifier_{}".format(i_layer)].parameters())
         else:
             self.discriminator["domain_classifier"] = networks.FCDiscriminator(num_classes=1)
             self.discriminator["domain_classifier"].train()
@@ -260,8 +269,8 @@ class TrainerUnpaired:
         self.loss_ortho = OrthoLoss().cuda()
         self.loss_recon1 = MSE().cuda()
         self.loss_recon2 = SIMSE().cuda()
-        self.domain_depth_loss = torch.nn.MSELoss(reduction='mean').cuda()
-        self.domain_feat_loss = torch.nn.MSELoss(reduction='mean').cuda()
+        self.domain_depth_loss = torch.nn.MSELoss().cuda()
+        self.domain_feat_loss = torch.nn.MSELoss().cuda()
         self.target_label = 1
         self.source_label = 0
 
@@ -475,28 +484,55 @@ class TrainerUnpaired:
             domain_loss_D = 0
             domain_loss_G = 0
             if self.opt.feature_disc:
-                day_pred = day_features[-1]
-                night_pred = night_features[-1]
-                predict_day = self.discriminator["domain_classifier"](day_pred)
-                predict_night = self.discriminator["domain_classifier"](night_pred)
+                if self.opt.num_discriminator == 0:
+                    D_loss, G_loss = 0, 0
+                    day_pred = day_features[-1]
+                    night_pred = night_features[-1]
+                    predict_day = self.discriminator["domain_classifier"](day_pred)
+                    predict_night = self.discriminator["domain_classifier"](night_pred)
 
-                D_loss, G_loss = 0, 0
-                # day = 1, night = 0
-                label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
-                label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                G_loss = self.domain_feat_loss(predict_day, label_source)
-                G_loss += self.domain_feat_loss(predict_night, label_target)
+                    # day = 1, night = 0
+                    label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
+                    label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
+                    G_loss = self.domain_feat_loss(predict_day, label_source)
+                    G_loss += self.domain_feat_loss(predict_night, label_target)
 
-                day_pred = day_features[-1].detach()
-                night_pred = night_features[-1].detach()
-                predict_day = self.discriminator["domain_classifier"](day_pred)
-                predict_night = self.discriminator["domain_classifier"](night_pred)
+                    day_pred = day_features[-1].detach()
+                    night_pred = night_features[-1].detach()
+                    predict_day = self.discriminator["domain_classifier"](day_pred)
+                    predict_night = self.discriminator["domain_classifier"](night_pred)
 
-                D_loss = self.domain_feat_loss(predict_day, label_target)
-                D_loss += self.domain_feat_loss(predict_night, label_source)
+                    D_loss = self.domain_feat_loss(predict_day, label_target)
+                    D_loss += self.domain_feat_loss(predict_night, label_source)
 
-                domain_loss_D += D_loss
-                domain_loss_G += G_loss
+                    domain_loss_D += D_loss
+                    domain_loss_G += G_loss
+                else:
+                    for i_layer in range(self.opt.num_discriminator):
+                        D_loss, G_loss = 0, 0
+                        day_pred = night_features[-(i_layer + 1)]
+                        night_pred = day_features[-(i_layer + 1)]
+                        predict_day = self.discriminator["domain_classifier_{}".format(i_layer)](day_pred)
+                        predict_night = self.discriminator["domain_classifier_{}".format(i_layer)](night_pred)
+
+                        # day = 1, night = 0
+                        label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
+                        label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
+                        G_loss = self.domain_feat_loss(predict_day, label_source)
+                        G_loss += self.domain_feat_loss(predict_night, label_target)
+
+                        day_pred = day_features[-(i_layer + 1)].detach()
+                        night_pred = night_features[-(i_layer + 1)].detach()
+                        predict_day = self.discriminator["domain_classifier_{}".format(i_layer)](day_pred)
+                        predict_night = self.discriminator["domain_classifier_{}".format(i_layer)](night_pred)
+
+                        D_loss = self.domain_feat_loss(predict_day, label_target)
+                        D_loss += self.domain_feat_loss(predict_night, label_source)
+
+                        domain_loss_D += (self.opt.num_discriminator - i_layer) * D_loss
+                        domain_loss_G += G_loss
+
+                    domain_loss_D /= sum(range(0, self.opt.num_discriminator))
             
             day_outputs.update(self.predict_poses(day_inputs, day_features))
             night_outputs.update(self.predict_poses(night_inputs, night_features))
@@ -507,8 +543,8 @@ class TrainerUnpaired:
             if not self.opt.feature_disc:
                 day_pred = day_outputs[('disp', 0)]
                 night_pred = night_outputs[('disp', 0)]
-                predict_day = self.discriminator["domain_classifier"](F.sigmoid(day_pred, dim=1))
-                predict_night = self.discriminator["domain_classifier"](F.sigmoid(night_pred, dim=1))
+                predict_day = self.discriminator["domain_classifier"](day_pred)
+                predict_night = self.discriminator["domain_classifier"](night_pred)
 
                 D_loss, G_loss = 0, 0
                 # day = 1, night = 0
@@ -519,8 +555,8 @@ class TrainerUnpaired:
 
                 day_pred = day_outputs[('disp', 0)].detach()
                 night_pred = night_outputs[('disp', 0)].detach()
-                predict_day = self.discriminator["domain_classifier"](F.sigmoid(day_pred, dim=1))
-                predict_night = self.discriminator["domain_classifier"](F.sigmoid(night_pred, dim=1))
+                predict_day = self.discriminator["domain_classifier"](day_pred)
+                predict_night = self.discriminator["domain_classifier"](night_pred)
 
                 D_loss = self.domain_depth_loss(predict_day, label_target)
                 D_loss += self.domain_depth_loss(predict_night, label_source)

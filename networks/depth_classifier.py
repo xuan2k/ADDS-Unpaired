@@ -10,6 +10,7 @@ class FCDiscriminator(nn.Module):
 		self.classifier = nn.AdaptiveAvgPool2d((1, 1))
 		self.leaky_relu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 		self.flatten = nn.Flatten()
+		self.sigmoid = nn.Sigmoid()
 
 	def forward(self, x):
 		x = self.conv1(x)
@@ -22,4 +23,5 @@ class FCDiscriminator(nn.Module):
 		x = self.classifier(x)
 		x = self.leaky_relu(x)
 		x = self.flatten(x)
+		x = self.sigmoid(x)
 		return x
