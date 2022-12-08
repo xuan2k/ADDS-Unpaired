@@ -524,11 +524,11 @@ class TrainerUnpaired:
             mean_light = night_img.mean()
             r = self.lightnet(day_img)
             day_enhance = day_img + r
-            loss_enhance_day = 10 * self.loss_TV(r) + torch.mean(self.loss_SSIM(day_enhance, day_img)) \
+            loss_enhance_day = 10 * self.loss_TV(r) + torch.mean(self.ssim(day_enhance, day_img)) \
                             + torch.mean(self.loss_exp_z(day_enhance, mean_light))
             r = self.lightnet(night_img)
             night_enhance = night_img + r
-            loss_enhance_night = 10 * self.loss_TV(r) + torch.mean(self.loss_SSIM(night_enhance, night_img)) \
+            loss_enhance_night = 10 * self.loss_TV(r) + torch.mean(self.ssim(night_enhance, night_img)) \
                             + torch.mean(self.loss_exp_z(night_enhance, mean_light))
             loss_enhance = loss_enhance_day + loss_enhance_night
             day_features, result_day = self.models["encoder"](day_enhance, 'day', 'train')
