@@ -82,8 +82,11 @@ class MonodepthOptions:
 
         # TRAIN Unpaired options
         self.parser.add_argument("--unpaired",
-                                 default=False,
-                                 help="train unpaired with invariant features discriminator")
+                                 help="train unpaired with invariant features discriminator",
+                                 action="store_true")
+        self.parser.add_argument("--light_enhance",
+                                 help="train with light net or not",
+                                 action="store_true")
         self.parser.add_argument("--feature_disc",
                                  help="discriminator apply on feature or depth",
                                  action="store_true")

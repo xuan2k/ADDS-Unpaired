@@ -72,6 +72,32 @@ class OrthoLoss(nn.Module):
 
         return ortho_loss
 
+class L_exp_z(nn.Module):
+    def __init__(self, patch_size):
+        super(L_exp_z, self).__init__()
+        self.pool = nn.AvgPool2d(patch_size)
+
+    def forward(self, x, mean_val):
+        x = torch.mean(x, 1, keepdim=True)
+        mean = self.pool(x)
+        d = torch.mean(torch.pow(mean - torch.FloatTensor([mean_val]).cuda(), 2))
+        return d
+
+
+class L_TV(nn.Module):
+    def __init__(self, TVLoss_weight=1):
+        super(L_TV, self).__init__()
+        self.TVLoss_weight = TVLoss_weight
+
+    def forward(self, x):
+        batch_size = x.size()[0]
+        h_x = x.size()[2]
+        w_x = x.size()[3]
+        count_h = (x.size()[2] - 1) * x.size()[3]
+        count_w = x.size()[2] * (x.size()[3] - 1)
+        h_tv = torch.pow((x[:, :, 1:, :] - x[:, :, :h_x - 1, :]), 2).sum()
+        w_tv = torch.pow((x[:, :, :, 1:] - x[:, :, :, :w_x - 1]), 2).sum()
+        return self.TVLoss_weight * 2 * (h_tv / count_h + w_tv / count_w) / batch_size
 
 class TrainerUnpaired:
     def __init__(self, options):
@@ -141,6 +167,12 @@ class TrainerUnpaired:
             self.models["pose"].to(self.device)
             self.parameters_to_train += list(self.models["pose"].parameters())
         
+        if self.opt.light_enhance:
+            self.lightnet = networks.LightNet()
+            self.lightnet.train()
+            self.lightnet.to(self.device)
+            self.parameters_to_train += list(self.lightnet.parameters())
+
         self.discriminator = {}
 
         if self.opt.feature_disc:
@@ -153,10 +185,11 @@ class TrainerUnpaired:
                 num_ch_enc = np.flip(self.models["encoder"].num_ch_enc)
                 self.parameters_to_train_D = []
                 for i_layer in range(self.opt.num_discriminator):
-                    self.models["domain_classifier_{}".format(i_layer)] = \
+                    self.discriminator["domain_classifier_{}".format(i_layer)] = \
                         networks.NLayerDiscriminator(num_ch_enc[i_layer])
-                    self.models["domain_classifier_{}".format(i_layer)].to(self.device)
-                    self.parameters_to_train_D += list(self.models["domain_classifier_{}".format(i_layer)].parameters())
+                    self.discriminator["domain_classifier_{}".format(i_layer)].train()
+                    self.discriminator["domain_classifier_{}".format(i_layer)].to(self.device)
+                    self.parameters_to_train_D += list(self.discriminator["domain_classifier_{}".format(i_layer)].parameters())
         else:
             self.discriminator["domain_classifier"] = networks.FCDiscriminator(num_classes=1)
             self.discriminator["domain_classifier"].train()
@@ -269,6 +302,8 @@ class TrainerUnpaired:
         self.loss_ortho = OrthoLoss().cuda()
         self.loss_recon1 = MSE().cuda()
         self.loss_recon2 = SIMSE().cuda()
+        self.loss_exp_z = L_exp_z(32)
+        self.loss_TV = L_TV()
         self.domain_depth_loss = torch.nn.MSELoss().cuda()
         self.domain_feat_loss = torch.nn.MSELoss().cuda()
         self.target_label = 1
@@ -318,6 +353,9 @@ class TrainerUnpaired:
                 mean_errors_day, mean_errors_night, mean_errors_all = self.run_epoch()
                 if (self.epoch + 1) % self.opt.save_frequency == 0:
                     self.save_model()
+                    if self.opt.light_enhance:
+                        torch.save(self.lightnet.state_dict(), os.path.join(self.opt.log_path, 'lightnet_' +str(self.epoch) + '.pth'))
+
                 mean_errors = []
                 if best_rmse > mean_errors_all[2]:
                     best_epoch = self.epoch
@@ -380,12 +418,22 @@ class TrainerUnpaired:
                 losses.backward()
             else:
                 loss_G = losses + losses_day["loss"] + losses_night["loss"] + domain_loss_G
-                for param in self.discriminator["domain_classifier"].parameters():
-                    param.requires_grad = False
+                if self.opt.feature_disc and self.opt.num_discriminator > 0:
+                    for i_layer in range(self.opt.num_discriminator):
+                        for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
+                            param.requires_grad = False
+                else:
+                    for param in self.discriminator["domain_classifier"].parameters():
+                        param.requires_grad = False
                 loss_G.backward()
                 
-                for param in self.discriminator["domain_classifier"].parameters():
-                    param.requires_grad = True
+                if self.opt.feature_disc and self.opt.num_discriminator > 0:
+                    for i_layer in range(self.opt.num_discriminator):
+                        for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
+                            param.requires_grad = True
+                else:
+                    for param in self.discriminator["domain_classifier"].parameters():
+                        param.requires_grad = True
 
                 domain_loss_D.backward()
 
@@ -469,8 +517,25 @@ class TrainerUnpaired:
             night_inputs[key] = ipt.to(self.device)
 
         # Otherwise, we only feed the image with frame_id 0 through the depth encoder
-        day_features, result_day = self.models["encoder"](day_inputs["color_aug", 0, 0], 'day', 'train')
-        night_features, result_night = self.models["encoder"](night_inputs["color_aug", 0, 0], 'night', 'train')
+        if self.opt.light_enhance:
+            loss_enhance = 0
+            day_img = day_inputs["color_aug", 0, 0].to(self.device)
+            night_img = night_inputs["color_aug", 0, 0].to(self.device)
+            mean_light = night_img.mean()
+            r = self.lightnet(day_img)
+            day_enhance = day_img + r
+            loss_enhance_day = 10 * self.loss_TV(r) + torch.mean(self.loss_SSIM(day_enhance, day_img)) \
+                            + torch.mean(self.loss_exp_z(day_enhance, mean_light))
+            r = self.lightnet(night_img)
+            night_enhance = night_img + r
+            loss_enhance_night = 10 * self.loss_TV(r) + torch.mean(self.loss_SSIM(night_enhance, night_img)) \
+                            + torch.mean(self.loss_exp_z(night_enhance, mean_light))
+            loss_enhance = loss_enhance_day + loss_enhance_night
+            day_features, result_day = self.models["encoder"](day_enhance, 'day', 'train')
+            night_features, result_night = self.models["encoder"](night_enhance, 'night', 'train')
+        else:
+            day_features, result_day = self.models["encoder"](day_inputs["color_aug", 0, 0], 'day', 'train')
+            night_features, result_night = self.models["encoder"](night_inputs["color_aug", 0, 0], 'night', 'train')
 
         if not self.opt.only_depth_encoder:
             day_outputs = self.models["depth"](day_features)
@@ -514,7 +579,7 @@ class TrainerUnpaired:
                         night_pred = day_features[-(i_layer + 1)]
                         predict_day = self.discriminator["domain_classifier_{}".format(i_layer)](day_pred)
                         predict_night = self.discriminator["domain_classifier_{}".format(i_layer)](night_pred)
-
+                        
                         # day = 1, night = 0
                         label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
                         label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
@@ -597,6 +662,9 @@ class TrainerUnpaired:
         loss += target_simse_night
         losses.append(target_mse_night)
         losses.append(target_simse_night)
+
+        if self.opt.light_enhance:
+            loss += loss_enhance
 
         if self.opt.only_depth_encoder:
             return losses, loss
