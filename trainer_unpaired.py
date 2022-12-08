@@ -800,7 +800,12 @@ class TrainerUnpaired:
                     # Post-processed results require each image to have two forward passes
                     input_color = torch.cat((input_color, torch.flip(input_color, [3])), 0)
 
-                features = self.models["encoder"](input_color, split, 'val')
+                if self.opt.light_enhance:
+                    r = self.lightnet(input_color)
+                    enhance_img = input_color + r
+                else:
+                    enhance_img = input_color
+                features = self.models["encoder"](enhance_img, split, 'val')
                 output = self.models["depth"](features)
 
                 pred_disp, _ = disp_to_depth(output[("disp", 0)], self.opt.min_depth, self.opt.max_depth)
