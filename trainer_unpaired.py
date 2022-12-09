@@ -129,8 +129,13 @@ class TrainerUnpaired:
         if self.opt.only_depth_encoder:
             self.opt.frame_ids = [0]
 
-        self.models["encoder"] = networks.ResnetEncoder(
-            self.opt.num_layers, self.opt.weights_init == "pretrained")
+        if self.opt.shared_encoder:
+            self.models["encoder"] = networks.ResnetEncoder(
+                self.opt.num_layers, self.opt.weights_init == "pretrained")
+        else:
+            self.models["encoder"] = networks.ResnetEncoderShared(
+                self.opt.num_layers, self.opt.weights_init == "pretrained")
+
         self.models["encoder"].to(self.device)
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
@@ -800,12 +805,7 @@ class TrainerUnpaired:
                     # Post-processed results require each image to have two forward passes
                     input_color = torch.cat((input_color, torch.flip(input_color, [3])), 0)
 
-                if self.opt.light_enhance:
-                    r = self.lightnet(input_color)
-                    enhance_img = input_color + r
-                else:
-                    enhance_img = input_color
-                features = self.models["encoder"](enhance_img, split, 'val')
+                features = self.models["encoder"](input_color, split, 'val')
                 output = self.models["depth"](features)
 
                 pred_disp, _ = disp_to_depth(output[("disp", 0)], self.opt.min_depth, self.opt.max_depth)

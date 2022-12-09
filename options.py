@@ -87,6 +87,9 @@ class MonodepthOptions:
         self.parser.add_argument("--light_enhance",
                                  help="train with light net or not",
                                  action="store_true")
+        self.parser.add_argument("--shared_encoder",
+                                 help="full shared encoder for day and night invariant features",
+                                 action="store_true")
         self.parser.add_argument("--feature_disc",
                                  help="discriminator apply on feature or depth",
                                  action="store_true")
