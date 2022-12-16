@@ -919,7 +919,7 @@ class TrainerDay:
         for i, metric in enumerate(self.depth_metric_names):
             losses[metric] = np.array(depth_errors[i].cpu())
 
-    def log_time(self, batch_idx, duration, loss_day, loss_night, loss_D, loss_G, other_loss):
+    def log_time(self, batch_idx, duration, loss_day, loss):
         """Print a logging statement to the terminal
         """
         samples_per_sec = self.opt.batch_size / duration
@@ -927,8 +927,8 @@ class TrainerDay:
         training_time_left = (
             self.num_total_steps / self.step - 1.0) * time_sofar if self.step > 0 else 0
         print_string = "epoch {:>3} | batch {:>6} | examples/s: {:5.1f}" + \
-            " | loss_day: {:.5f} | loss_night: {:.5f} | loss_D: {:.5f} | loss_G: {:.5f} | loss_other: {:.5f}"
-        print(print_string.format(self.epoch, batch_idx, samples_per_sec, loss_day, loss_night, loss_D, loss_G, other_loss))
+            " | loss_day: {:.5f} | loss: {:.5f}"
+        print(print_string.format(self.epoch, batch_idx, samples_per_sec, loss_day, loss))
 
     def log(self, mode, inputs, outputs, losses):
         """Write an event to the tensorboard events file
