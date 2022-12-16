@@ -81,6 +81,9 @@ class MonodepthOptions:
                                  default=[0, -1, 1])
 
         # TRAIN Unpaired options
+        self.parser.add_argument("--train_day_only",
+                                 help="train only with day images",
+                                 action="store_true")
         self.parser.add_argument("--unpaired",
                                  help="train unpaired with invariant features discriminator",
                                  action="store_true")

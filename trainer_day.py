@@ -72,34 +72,7 @@ class OrthoLoss(nn.Module):
 
         return ortho_loss
 
-class L_exp_z(nn.Module):
-    def __init__(self, patch_size):
-        super(L_exp_z, self).__init__()
-        self.pool = nn.AvgPool2d(patch_size)
-
-    def forward(self, x, mean_val):
-        x = torch.mean(x, 1, keepdim=True)
-        mean = self.pool(x)
-        d = torch.mean(torch.pow(mean - torch.FloatTensor([mean_val]).cuda(), 2))
-        return d
-
-
-class L_TV(nn.Module):
-    def __init__(self, TVLoss_weight=1):
-        super(L_TV, self).__init__()
-        self.TVLoss_weight = TVLoss_weight
-
-    def forward(self, x):
-        batch_size = x.size()[0]
-        h_x = x.size()[2]
-        w_x = x.size()[3]
-        count_h = (x.size()[2] - 1) * x.size()[3]
-        count_w = x.size()[2] * (x.size()[3] - 1)
-        h_tv = torch.pow((x[:, :, 1:, :] - x[:, :, :h_x - 1, :]), 2).sum()
-        w_tv = torch.pow((x[:, :, :, 1:] - x[:, :, :, :w_x - 1]), 2).sum()
-        return self.TVLoss_weight * 2 * (h_tv / count_h + w_tv / count_w) / batch_size
-
-class TrainerUnpaired:
+class TrainerDay:
     def __init__(self, options):
         self.setup_seed(20)
         self.opt = options
@@ -171,36 +144,6 @@ class TrainerUnpaired:
 
             self.models["pose"].to(self.device)
             self.parameters_to_train += list(self.models["pose"].parameters())
-        
-        if self.opt.light_enhance:
-            self.lightnet = networks.LightNet()
-            self.lightnet.train()
-            self.lightnet.to(self.device)
-            self.parameters_to_train += list(self.lightnet.parameters())
-
-        self.discriminator = {}
-
-        if self.opt.feature_disc:
-            if self.opt.num_discriminator == 0:
-                self.discriminator["domain_classifier"] = networks.FeatureClassifier(batch_size=self.opt.batch_size)
-                self.discriminator["domain_classifier"].train()
-                self.discriminator["domain_classifier"].to(self.device)
-                self.parameters_to_train_D = list(self.discriminator["domain_classifier"].parameters())
-            else:
-                num_ch_enc = np.flip(self.models["encoder"].num_ch_enc)
-                self.parameters_to_train_D = []
-                for i_layer in range(self.opt.num_discriminator):
-                    self.discriminator["domain_classifier_{}".format(i_layer)] = \
-                        networks.NLayerDiscriminator(num_ch_enc[i_layer])
-                    self.discriminator["domain_classifier_{}".format(i_layer)].train()
-                    self.discriminator["domain_classifier_{}".format(i_layer)].to(self.device)
-                    self.parameters_to_train_D += list(self.discriminator["domain_classifier_{}".format(i_layer)].parameters())
-        else:
-            self.discriminator["domain_classifier"] = networks.FCDiscriminator(num_classes=1)
-            self.discriminator["domain_classifier"].train()
-            self.discriminator["domain_classifier"].to(self.device)
-            self.parameters_to_train_D = list(self.discriminator["domain_classifier"].parameters())
-
 
         if self.opt.predictive_mask and not self.opt.only_depth_encoder:
             assert self.opt.disable_automasking, \
@@ -217,10 +160,6 @@ class TrainerUnpaired:
         self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate, weight_decay=0.0005)
         self.model_lr_scheduler = optim.lr_scheduler.StepLR(
             self.model_optimizer, self.opt.scheduler_step_size, 0.1)
-        
-        self.model_optimizer_D = optim.Adam(self.parameters_to_train_D, self.opt.learning_rate, weight_decay=0.0005)
-        self.model_lr_scheduler_D = optim.lr_scheduler.StepLR(
-            self.model_optimizer_D, self.opt.scheduler_step_size, 0.1)
        
         if self.opt.load_weights_folder is not None:
             self.load_model()
@@ -251,13 +190,6 @@ class TrainerUnpaired:
             train_day_dataset, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
         
-        train_night_dataset = self.dataset(self.opt,
-            self.opt.data_path, train_night_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
-        self.train_night_loader = DataLoader(
-            train_night_dataset, self.opt.batch_size, True,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
-
         val_day_dataset = self.dataset(self.opt,
             self.opt.data_path, val_day_filenames, self.opt.height, self.opt.width,
             [0], 4, is_train=False, img_ext='.png')
@@ -265,14 +197,6 @@ class TrainerUnpaired:
             val_day_dataset, self.opt.batch_size, False,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=False)
         self.val_iter_day = iter(self.val_day_loader)
-
-        val_night_dataset = self.dataset(self.opt,
-            self.opt.data_path, val_night_filenames, self.opt.height, self.opt.width,
-            [0], 4, is_train=False, img_ext='.png')
-        self.val_night_loader = DataLoader(
-            val_night_dataset, self.opt.batch_size, False,
-            num_workers=self.opt.num_workers, pin_memory=True, drop_last=False)
-        self.val_iter_night = iter(self.val_night_loader)
 
         self.writers = {}
         for mode in ["train", "val_day", "val_night"]:
@@ -299,19 +223,13 @@ class TrainerUnpaired:
 
         print("Using split:\n  ", self.opt.split)
         print("There are {:d} training items and {:d} all validation items\n".format(
-            len(train_day_dataset) + len(train_night_dataset), len(val_day_dataset) + len(val_night_dataset)))
+            len(train_day_dataset), len(val_day_dataset)))
 
         self.save_opts()
 
         self.loss_ortho = OrthoLoss().cuda()
         self.loss_recon1 = MSE().cuda()
         self.loss_recon2 = SIMSE().cuda()
-        self.loss_exp_z = L_exp_z(32)
-        self.loss_TV = L_TV()
-        self.domain_depth_loss = torch.nn.MSELoss().cuda()
-        self.domain_feat_loss = torch.nn.MSELoss().cuda()
-        self.target_label = 1
-        self.source_label = 0
 
     def setup_seed(self,seed):
         torch.manual_seed(seed)
@@ -357,9 +275,7 @@ class TrainerUnpaired:
                 mean_errors_day, mean_errors_night, mean_errors_all = self.run_epoch()
                 if (self.epoch + 1) % self.opt.save_frequency == 0:
                     self.save_model()
-                    if self.opt.light_enhance:
-                        torch.save(self.lightnet.state_dict(), os.path.join(self.opt.log_path, 'lightnet_' +str(self.epoch) + '.pth'))
-
+                    
                 mean_errors = []
                 if best_rmse > mean_errors_all[2]:
                     best_epoch = self.epoch
@@ -403,46 +319,29 @@ class TrainerUnpaired:
         # self.model_lr_scheduler_D.step()
         print("Training")
         self.set_train()
-        day_iterator = iter(self.train_day_loader)
-        for batch_idx, night_inputs in enumerate(self.train_night_loader):
-            try:
-                day_inputs = next(day_iterator)
-            except StopIteration:
-                day_iterator = iter(self.train_day_loader)
-                day_inputs = next(day_iterator)
+        if not self.opt.train_day_only:
+            night_iterator = iter(self.train_night_loader)
+        for batch_idx, day_inputs in enumerate(self.train_day_loader):
+            if not self.opt.train_day_only:
+                try:
+                    night_inputs = next(night_iterator)
+                except StopIteration:
+                    night_iterator = iter(self.train_night_loader)
+                    night_inputs = next(night_iterator)
 
             before_op_time = time.time()
 
-            outputs_day, outputs_night, losses, losses_day, losses_night, domain_loss_D, domain_loss_G = self.process_batch(day_inputs, night_inputs)
+            outputs_day, losses, losses_day = self.process_batch(day_inputs)
 
             self.model_optimizer.zero_grad()
-            self.model_optimizer_D.zero_grad()
 
             if self.opt.only_depth_encoder:
                 losses.backward()
             else:
-                loss_G = losses + losses_day["loss"] + losses_night["loss"] + domain_loss_G
-                if self.opt.feature_disc and self.opt.num_discriminator > 0:
-                    for i_layer in range(self.opt.num_discriminator):
-                        for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
-                            param.requires_grad = False
-                else:
-                    for param in self.discriminator["domain_classifier"].parameters():
-                        param.requires_grad = False
-                loss_G.backward()
-                
-                if self.opt.feature_disc and self.opt.num_discriminator > 0:
-                    for i_layer in range(self.opt.num_discriminator):
-                        for param in self.discriminator["domain_classifier_{}".format(i_layer)].parameters():
-                            param.requires_grad = True
-                else:
-                    for param in self.discriminator["domain_classifier"].parameters():
-                        param.requires_grad = True
-
-                domain_loss_D.backward()
+                loss = losses + losses_day["loss"]
+                loss.backward()
 
             self.model_optimizer.step()
-            self.model_optimizer_D.step()
 
             duration = time.time() - before_op_time
 
@@ -453,17 +352,12 @@ class TrainerUnpaired:
             # if early_phase or late_phase:
             if batch_idx % 100 == 0 and not self.opt.only_depth_encoder:
                 self.log_time(batch_idx, duration, losses_day["loss"].cpu().data, \
-                              losses_night["loss"].cpu().data, \
-                              domain_loss_D, \
-                              domain_loss_G, \
                               losses.cpu().data)  
                 # self.log_time(batch_idx, duration, losses.cpu().data)
 
                 if "depth_gt" in day_inputs:
                     self.compute_depth_losses(day_inputs, outputs_day, losses_day)
-                if "depth_gt" in night_inputs:
-                    self.compute_depth_losses(night_inputs, outputs_night, losses_night)
-
+                
             if batch_idx % 100 == 0 and self.opt.only_depth_encoder:
                 print("\n  " + ("{:>8} | " * 8).format("diff_day", "diff_night", "recon_day1", "recon_day2",
                                                        "recon_night1", "recon_night2", "similarity", "loss_all"))
@@ -474,7 +368,6 @@ class TrainerUnpaired:
                     
         if not self.opt.only_depth_encoder:
             self.log("train", day_inputs, outputs_day, losses_day.items())
-            self.log("train", night_inputs, outputs_night, losses_night.items())
             self.step += 1
 
             mean_errors_day = self.evaluate('day')
@@ -511,147 +404,36 @@ class TrainerUnpaired:
 
             return outputs1, outputs2
 
-    def process_batch(self, day_inputs, night_inputs):
+    def process_batch(self, day_inputs):
         """Pass a minibatch through the network and generate images and losses
         """
         for key, ipt in day_inputs.items():
             day_inputs[key] = ipt.to(self.device)
-        
-        for key, ipt in night_inputs.items():
-            night_inputs[key] = ipt.to(self.device)
 
         # Otherwise, we only feed the image with frame_id 0 through the depth encoder
-        if self.opt.light_enhance:
-            loss_enhance = 0
-            day_img = day_inputs["color_aug", 0, 0].to(self.device)
-            night_img = night_inputs["color_aug", 0, 0].to(self.device)
-            mean_light = night_img.mean()
-            r = self.lightnet(day_img)
-            day_enhance = day_img + r
-            loss_enhance_day = 10 * self.loss_TV(r) + torch.mean(self.ssim(day_enhance, day_img)) \
-                            + torch.mean(self.loss_exp_z(day_enhance, mean_light))
-            r = self.lightnet(night_img)
-            night_enhance = night_img + r
-            loss_enhance_night = 10 * self.loss_TV(r) + torch.mean(self.ssim(night_enhance, night_img)) \
-                            + torch.mean(self.loss_exp_z(night_enhance, mean_light))
-            loss_enhance = loss_enhance_day + loss_enhance_night
-            day_features, result_day = self.models["encoder"](day_enhance, 'day', 'train')
-            night_features, result_night = self.models["encoder"](night_enhance, 'night', 'train')
-        else:
-            day_features, result_day = self.models["encoder"](day_inputs["color_aug", 0, 0], 'day', 'train')
-            night_features, result_night = self.models["encoder"](night_inputs["color_aug", 0, 0], 'night', 'train')
-
+        day_features, result_day = self.models["encoder"](day_inputs["color_aug", 0, 0], 'day', 'train')
+       
         if not self.opt.only_depth_encoder:
             day_outputs = self.models["depth"](day_features)
-            night_outputs = self.models["depth"](night_features)
-
+            
         if self.opt.predictive_mask and not self.opt.only_depth_encoder:
             day_outputs["predictive_mask"] = self.models["predictive_mask"](day_features)
-            night_outputs["predictive_mask"] = self.models["predictive_mask"](night_features)
-
+            
         if self.use_pose_net and not self.opt.only_depth_encoder:
-            domain_loss_D = 0
-            domain_loss_G = 0
-            if self.opt.feature_disc:
-                if self.opt.num_discriminator == 0:
-                    D_loss, G_loss = 0, 0
-                    day_pred = day_features[-1]
-                    night_pred = night_features[-1]
-                    predict_day = self.discriminator["domain_classifier"](day_pred)
-                    predict_night = self.discriminator["domain_classifier"](night_pred)
-
-                    # day = 1, night = 0
-                    label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
-                    label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                    G_loss = self.domain_feat_loss(predict_day, label_source)
-                    G_loss += self.domain_feat_loss(predict_night, label_target)
-
-                    day_pred = day_features[-1].detach()
-                    night_pred = night_features[-1].detach()
-                    predict_day = self.discriminator["domain_classifier"](day_pred)
-                    predict_night = self.discriminator["domain_classifier"](night_pred)
-
-                    D_loss = self.domain_feat_loss(predict_day, label_target)
-                    D_loss += self.domain_feat_loss(predict_night, label_source)
-
-                    domain_loss_D += D_loss
-                    domain_loss_G += G_loss
-                else:
-                    for i_layer in range(self.opt.num_discriminator):
-                        D_loss, G_loss = 0, 0
-                        day_pred = night_features[-(i_layer + 1)]
-                        night_pred = day_features[-(i_layer + 1)]
-                        predict_day = self.discriminator["domain_classifier_{}".format(i_layer)](day_pred)
-                        predict_night = self.discriminator["domain_classifier_{}".format(i_layer)](night_pred)
-                        
-                        # day = 1, night = 0
-                        label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
-                        label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                        G_loss = self.domain_feat_loss(predict_day, label_source)
-                        G_loss += self.domain_feat_loss(predict_night, label_target)
-
-                        day_pred = day_features[-(i_layer + 1)].detach()
-                        night_pred = night_features[-(i_layer + 1)].detach()
-                        predict_day = self.discriminator["domain_classifier_{}".format(i_layer)](day_pred)
-                        predict_night = self.discriminator["domain_classifier_{}".format(i_layer)](night_pred)
-
-                        D_loss = self.domain_feat_loss(predict_day, label_target)
-                        D_loss += self.domain_feat_loss(predict_night, label_source)
-
-                        domain_loss_D += (self.opt.num_discriminator - i_layer) * D_loss
-                        domain_loss_G += G_loss
-
-                    domain_loss_D /= sum(range(0, self.opt.num_discriminator))
-            
             day_outputs.update(self.predict_poses(day_inputs, day_features))
-            night_outputs.update(self.predict_poses(night_inputs, night_features))
-
             self.generate_images_pred(day_inputs, day_outputs)
-            self.generate_images_pred(night_inputs, night_outputs)
-
-            if not self.opt.feature_disc:
-                day_pred = day_outputs[('disp', 0)]
-                night_pred = night_outputs[('disp', 0)]
-                predict_day = self.discriminator["domain_classifier"](day_pred)
-                predict_night = self.discriminator["domain_classifier"](night_pred)
-
-                D_loss, G_loss = 0, 0
-                # day = 1, night = 0
-                label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
-                label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                G_loss = self.domain_depth_loss(predict_day, label_source)
-                G_loss += self.domain_depth_loss(predict_night, label_target)
-
-                day_pred = day_outputs[('disp', 0)].detach()
-                night_pred = night_outputs[('disp', 0)].detach()
-                predict_day = self.discriminator["domain_classifier"](day_pred)
-                predict_night = self.discriminator["domain_classifier"](night_pred)
-
-                D_loss = self.domain_depth_loss(predict_day, label_target)
-                D_loss += self.domain_depth_loss(predict_night, label_source)
-
-                domain_loss_D += D_loss
-                domain_loss_G += G_loss
-            
             losses_day = self.compute_losses(day_inputs, day_outputs)
-            losses_night = self.compute_losses(night_inputs, night_outputs)
                 
         loss = 0
         losses = []
         # ortho
         target_ortho1 = 0.5 * self.loss_ortho(result_day[0], result_day[2])  # 10 when batchsize=1
-        target_ortho2 = 0.5 * self.loss_ortho(result_night[0], result_night[2])
         losses.append(target_ortho1)
-        losses.append(target_ortho2)
         loss += target_ortho1
-        loss += target_ortho2
         
         target_ortho3 = 1 * self.loss_ortho(result_day[1], result_day[3])  # 10 when batchsize=1
-        target_ortho4 = 1 * self.loss_ortho(result_night[1], result_night[3])
         losses.append(target_ortho3)
-        losses.append(target_ortho4)
         loss += target_ortho3
-        loss += target_ortho4
 
         # recon
         target_mse = 1 * self.loss_recon1(result_day[5], day_inputs["color_aug", 0, 0])
@@ -660,20 +442,11 @@ class TrainerUnpaired:
         loss += target_simse
         losses.append(target_mse)
         losses.append(target_simse)
-        target_mse_night = 1 * self.loss_recon1(result_night[5], night_inputs["color_aug", 0, 0])
-        loss += target_mse_night
-        target_simse_night = 1 * self.loss_recon2(result_night[5], night_inputs["color_aug", 0, 0])
-        loss += target_simse_night
-        losses.append(target_mse_night)
-        losses.append(target_simse_night)
-
-        if self.opt.light_enhance:
-            loss += loss_enhance
-
+       
         if self.opt.only_depth_encoder:
             return losses, loss
         else:
-            return day_outputs, night_outputs, loss, losses_day, losses_night, domain_loss_D, domain_loss_G
+            return day_outputs, loss, losses_day
 
     def predict_poses(self, inputs, features):
         """Predict poses between input frames for monocular sequences.
