@@ -176,9 +176,7 @@ class TrainerDay:
         fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_files.txt")
 
         train_day_filenames = readlines(fpath.format("train_day"))
-        train_night_filenames = readlines(fpath.format("train_night"))
         val_day_filenames = readlines(fpath.format("val_day"))
-        val_night_filenames = readlines(fpath.format("val_night"))
         img_ext = '.png' if self.opt.png else '.jpg'
 
         num_train_samples = len(train_day_filenames)
@@ -272,7 +270,7 @@ class TrainerDay:
                 f.write("\n")        
             f.close()
             if not self.opt.only_depth_encoder:
-                mean_errors_day, mean_errors_night, mean_errors_all = self.run_epoch()
+                mean_errors_all = self.run_epoch()
                 if (self.epoch + 1) % self.opt.save_frequency == 0:
                     self.save_model()
                     
@@ -307,7 +305,7 @@ class TrainerDay:
 
                 f.close()
             else:
-                output_day, output_night = self.run_epoch()
+                output_day = self.run_epoch()
                 if (self.epoch + 1) % self.opt.save_frequency == 0:
                     self.save_model()
 
@@ -319,16 +317,7 @@ class TrainerDay:
         # self.model_lr_scheduler_D.step()
         print("Training")
         self.set_train()
-        if not self.opt.train_day_only:
-            night_iterator = iter(self.train_night_loader)
         for batch_idx, day_inputs in enumerate(self.train_day_loader):
-            if not self.opt.train_day_only:
-                try:
-                    night_inputs = next(night_iterator)
-                except StopIteration:
-                    night_iterator = iter(self.train_night_loader)
-                    night_inputs = next(night_iterator)
-
             before_op_time = time.time()
 
             outputs_day, losses, losses_day = self.process_batch(day_inputs)
@@ -371,38 +360,31 @@ class TrainerDay:
             self.step += 1
 
             mean_errors_day = self.evaluate('day')
-            mean_errors_night = self.evaluate('night')
-            mean_errors_all = (mean_errors_day + mean_errors_night) /2
             print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
-            print(("&{: 8.3f}  " * 7).format(*mean_errors_all.tolist()) + "\\\\")
+            print(("&{: 8.3f}  " * 7).format(*mean_errors_day.tolist()) + "\\\\")
             print("\n-> Done!")
         
             with open(self.result_path, 'a') as f:
-                for i in range(len(mean_errors_all)):
-                    f.write(str(mean_errors_all[i])) #
+                for i in range(len(mean_errors_day)):
+                    f.write(str(mean_errors_day[i])) #
                     f.write('\t')
                 f.write("\n")
   
             f.close()
 
-            return mean_errors_day, mean_errors_night, mean_errors_all
+            return mean_errors_day
         else:
             outputs1 = self.val_only_encoder(self.val_day_loader)
             print("\n  " + ("{:>8} | " * 8).format("diff_day", "diff_night", "recon_day1", "recon_day2", "recon_night1", "recon_night2", "similarity","loss_all"))
             print(outputs1)
-            outputs2 = self.val_only_encoder(self.val_night_loader)
-            print(outputs2)
-
+            
             with open(self.result_path, 'a') as f:
                 f.write(str(outputs1))  #
                 f.write('\t')
                 f.write("\n")
-                f.write(str(outputs2))  #
-                f.write('\t')
-                f.write("\n")
             f.close()
 
-            return outputs1, outputs2
+            return outputs1
 
     def process_batch(self, day_inputs):
         """Pass a minibatch through the network and generate images and losses
@@ -565,9 +547,6 @@ class TrainerDay:
         if split=='day':
             dataloader = self.val_day_loader
             val_split = 'val_day'
-        elif split =='night':
-            dataloader = self.val_night_loader
-            val_split = 'val_night'
 
         with torch.no_grad():
             for data in dataloader:
