@@ -224,6 +224,9 @@ class TrainerUnpaired:
        
         if self.opt.load_weights_folder is not None:
             self.load_model()
+        
+        if self.opt.load_depth_weights is not None:
+            self.load_depth_model()
 
         print("Training model named:\n  ", self.opt.model_name)
         print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
@@ -1280,3 +1283,18 @@ class TrainerUnpaired:
             self.model_optimizer.load_state_dict(optimizer_dict)
         else:
             print("Cannot find Adam weights so Adam is randomly initialized")
+
+    def load_depth_model(self):
+        self.opt.load_depth_weights = os.path.expanduser(self.opt.load_depth_weights)
+
+        assert os.path.isdir(self.opt.load_depth_weights), \
+            "Cannot find folder {}".format(self.opt.load_depth_weights)
+        print("Loading depth model from: {}".format(self.opt.load_depth_weights))
+
+        encoder_path = os.path.join(self.opt.load_depth_weights, "encoder.pth")
+        decoder_path = os.path.join(self.opt.load_depth_weights, "depth.pth")
+
+        encoder_dict = torch.load(encoder_path)
+        model_dict = self.models["encoder"].state_dict()
+        self.models["encoder"].encoder.load_state_dict({k.replace("encoder.", ""): v for k, v in encoder_dict.items() if k in model_dict})
+        self.models["depth"].load_state_dict(torch.load(decoder_path))

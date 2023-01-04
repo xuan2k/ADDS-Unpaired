@@ -168,6 +168,9 @@ class MonodepthOptions:
         self.parser.add_argument("--load_weights_folder",
                                  type=str,
                                  help="name of model to load")
+        self.parser.add_argument("--load_depth_weights",
+                                 type=str,
+                                 help="name of model to load")
         self.parser.add_argument("--load_relighting_net",
                                  type=str,
                                  default=None,
