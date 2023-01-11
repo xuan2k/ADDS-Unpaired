@@ -436,14 +436,14 @@ class Trainer:
             outputs_night["predictive_mask"] = self.models["predictive_mask"](features_night)
 
         if self.use_pose_net and not self.opt.only_depth_encoder:
-            outputs.update(self.predict_poses(inputs, features, 'day'))
-            outputs_night.update(self.predict_poses(inputs, features_night, 'night'))
+            outputs.update(self.predict_poses(inputs, features, is_night=False))
+            outputs_night.update(self.predict_poses(inputs, features_night, is_night=True))
 
-            self.generate_images_pred(inputs, outputs, 'day')
-            self.generate_images_pred(inputs, outputs_night, 'night')
+            self.generate_images_pred(inputs, outputs, is_night=False)
+            self.generate_images_pred(inputs, outputs_night, is_night=True)
 
-            losses_day = self.compute_losses(inputs, outputs, 'day')
-            losses_night = self.compute_losses(inputs, outputs_night, 'night')
+            losses_day = self.compute_losses(inputs, outputs, is_night=False)
+            losses_night = self.compute_losses(inputs, outputs_night, is_night=True)
 
         loss = 0
         losses = []

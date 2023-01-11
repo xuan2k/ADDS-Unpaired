@@ -821,6 +821,8 @@ class TrainerUnpaired:
                 gt.append(np.squeeze(data['depth_gt'].cpu().numpy()))
 
         pred_disps = np.concatenate(pred_disps)
+        if gt[-1].ndim==2:
+            gt[-1] = gt[-1][np.newaxis,:]
         gt = np.concatenate(gt)
 
 
@@ -892,11 +894,6 @@ class TrainerUnpaired:
             pred_depth = pred_depth[mask]
             gt_depth = gt_depth[mask]
 
-            # # range 60m
-            # mask2 = gt_depth<=40
-            # pred_depth = pred_depth[mask2]
-            # gt_depth = gt_depth[mask2]
-
             pred_depth *= self.opt.pred_depth_scale_factor
             if not self.opt.disable_median_scaling:
                 ratio = np.median(gt_depth) / np.median(pred_depth)
@@ -905,6 +902,11 @@ class TrainerUnpaired:
 
             pred_depth[pred_depth < MIN_DEPTH] = MIN_DEPTH
             pred_depth[pred_depth > MAX_DEPTH] = MAX_DEPTH
+
+            # # range 60m
+            mask2 = gt_depth<=60
+            pred_depth = pred_depth[mask2]
+            gt_depth = gt_depth[mask2]
 
             errors.append(self.compute_errors(gt_depth, pred_depth))
 
