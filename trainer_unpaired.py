@@ -129,7 +129,7 @@ class TrainerUnpaired:
         if self.opt.only_depth_encoder:
             self.opt.frame_ids = [0]
 
-        if self.opt.shared_encoder:
+        if not self.opt.shared_encoder:
             self.models["encoder"] = networks.ResnetEncoder(
                 self.opt.num_layers, self.opt.weights_init == "pretrained")
         else:
@@ -416,7 +416,7 @@ class TrainerUnpaired:
 
             before_op_time = time.time()
 
-            outputs_day, outputs_night, losses, losses_day, losses_night, domain_loss_D, domain_loss_G = self.process_batch(day_inputs, night_inputs)
+            outputs_day, outputs_night, losses, log_losses, losses_day, losses_night, domain_loss_D, domain_loss_G = self.process_batch(day_inputs, night_inputs)
 
             self.model_optimizer.zero_grad()
             self.model_optimizer_D.zero_grad()
@@ -476,8 +476,7 @@ class TrainerUnpaired:
             # break
                     
         if not self.opt.only_depth_encoder:
-            self.log("train", day_inputs, outputs_day, losses_day.items())
-            self.log("train", night_inputs, outputs_night, losses_night.items())
+            self.log("train", log_losses)
             self.step += 1
 
             mean_errors_day = self.evaluate('day')
@@ -613,8 +612,8 @@ class TrainerUnpaired:
             self.generate_images_pred(night_inputs, night_outputs)
 
             if not self.opt.feature_disc:
-                day_pred = day_outputs[('disp', 0)]
-                night_pred = night_outputs[('disp', 0)]
+                day_pred = day_outputs[('disp', 0)].detach()
+                night_pred = night_outputs[('disp', 0)].detach()
                 predict_day = self.discriminator["domain_classifier"](day_pred)
                 predict_night = self.discriminator["domain_classifier"](night_pred)
 
@@ -634,41 +633,49 @@ class TrainerUnpaired:
                 D_loss += self.domain_depth_loss(predict_night, label_source)
 
                 domain_loss_D += D_loss
-                domain_loss_G += G_loss
+                domain_loss_G += 0.1 * G_loss
             
             losses_day = self.compute_losses(day_inputs, day_outputs)
             losses_night = self.compute_losses(night_inputs, night_outputs)
                 
         loss = 0
-        losses = []
+        losses = {}
+        losses["ortho"] = 0
+        losses["day_feat"] = result_day[0].sum()
+        losses["night_feat"] = result_night[0].sum()
         # ortho
         target_ortho1 = 0.5 * self.loss_ortho(result_day[0], result_day[2])  # 10 when batchsize=1
         target_ortho2 = 0.5 * self.loss_ortho(result_night[0], result_night[2])
-        losses.append(target_ortho1)
-        losses.append(target_ortho2)
+        losses["ortho"] += target_ortho1
+        losses["ortho"] += target_ortho2
         loss += target_ortho1
         loss += target_ortho2
         
         target_ortho3 = 1 * self.loss_ortho(result_day[1], result_day[3])  # 10 when batchsize=1
         target_ortho4 = 1 * self.loss_ortho(result_night[1], result_night[3])
-        losses.append(target_ortho3)
-        losses.append(target_ortho4)
+        losses["ortho"] += target_ortho3
+        losses["ortho"] += target_ortho4
         loss += target_ortho3
         loss += target_ortho4
 
+        losses["recons_day"] = 0
+        losses["recons_night"] = 0
         # recon
-        target_mse = 1 * self.loss_recon1(result_day[5], day_inputs["color_aug", 0, 0])
+        target_mse = 0.1 * self.loss_recon1(result_day[5], day_inputs["color_aug", 0, 0])
         loss += target_mse
-        target_simse = 1 * self.loss_recon2(result_day[5], day_inputs["color_aug", 0, 0])
+        target_simse = 0.1 * self.loss_recon2(result_day[5], day_inputs["color_aug", 0, 0])
         loss += target_simse
-        losses.append(target_mse)
-        losses.append(target_simse)
-        target_mse_night = 1 * self.loss_recon1(result_night[5], night_inputs["color_aug", 0, 0])
+        losses["recons_day"] += target_mse
+        losses["recons_day"] += target_simse
+        target_mse_night = 0.1 * self.loss_recon1(result_night[5], night_inputs["color_aug", 0, 0])
         loss += target_mse_night
-        target_simse_night = 1 * self.loss_recon2(result_night[5], night_inputs["color_aug", 0, 0])
+        target_simse_night = 0.1 * self.loss_recon2(result_night[5], night_inputs["color_aug", 0, 0])
         loss += target_simse_night
-        losses.append(target_mse_night)
-        losses.append(target_simse_night)
+        losses["recons_night"] += target_mse_night
+        losses["recons_night"] += target_simse_night
+
+        losses["day_depth"] = losses_day["loss"]
+        losses["night_depth"] = losses_night["loss"]
 
         if self.opt.light_enhance:
             loss += loss_enhance
@@ -676,7 +683,7 @@ class TrainerUnpaired:
         if self.opt.only_depth_encoder:
             return losses, loss
         else:
-            return day_outputs, night_outputs, loss, losses_day, losses_night, domain_loss_D, domain_loss_G
+            return day_outputs, night_outputs, loss, losses, losses_day, losses_night, domain_loss_D, domain_loss_G
 
     def predict_poses(self, inputs, features):
         """Predict poses between input frames for monocular sequences.
@@ -1162,39 +1169,39 @@ class TrainerUnpaired:
             " | loss_day: {:.5f} | loss_night: {:.5f} | loss_D: {:.5f} | loss_G: {:.5f} | loss_other: {:.5f}"
         print(print_string.format(self.epoch, batch_idx, samples_per_sec, loss_day, loss_night, loss_D, loss_G, other_loss))
 
-    def log(self, mode, inputs, outputs, losses):
+    def log(self, mode, losses):
         """Write an event to the tensorboard events file
         """
         writer = self.writers[mode]
-        for l, v in losses:
+        for l, v in losses.items():
             writer.add_scalar("{}".format(l), v, self.step)
 
-        for j in range(min(4, self.opt.batch_size)):  # write a maxmimum of four images
-            for s in self.opt.scales:
-                for frame_id in self.opt.frame_ids:
-                    writer.add_image(
-                        "color_{}_{}/{}".format(frame_id, s, j),
-                        inputs[("color", frame_id, s)][j].data, self.step)
-                    if s == 0 and frame_id != 0:
-                        writer.add_image(
-                            "color_pred_{}_{}/{}".format(frame_id, s, j),
-                            outputs[("color", frame_id, s)][j].data, self.step)
+        # for j in range(min(4, self.opt.batch_size)):  # write a maxmimum of four images
+        #     for s in self.opt.scales:
+        #         for frame_id in self.opt.frame_ids:
+        #             writer.add_image(
+        #                 "color_{}_{}/{}".format(frame_id, s, j),
+        #                 inputs[("color", frame_id, s)][j].data, self.step)
+        #             if s == 0 and frame_id != 0:
+        #                 writer.add_image(
+        #                     "color_pred_{}_{}/{}".format(frame_id, s, j),
+        #                     outputs[("color", frame_id, s)][j].data, self.step)
 
-                writer.add_image(
-                    "disp_{}/{}".format(s, j),
-                    normalize_image(outputs[("disp", s)][j]), self.step)
+        #         writer.add_image(
+        #             "disp_{}/{}".format(s, j),
+        #             normalize_image(outputs[("disp", s)][j]), self.step)
 
-                if self.opt.predictive_mask:
-                    for f_idx, frame_id in enumerate(self.opt.frame_ids[1:]):
-                        writer.add_image(
-                            "predictive_mask_{}_{}/{}".format(frame_id, s, j),
-                            outputs["predictive_mask"][("disp", s)][j, f_idx][None, ...],
-                            self.step)
+        #         if self.opt.predictive_mask:
+        #             for f_idx, frame_id in enumerate(self.opt.frame_ids[1:]):
+        #                 writer.add_image(
+        #                     "predictive_mask_{}_{}/{}".format(frame_id, s, j),
+        #                     outputs["predictive_mask"][("disp", s)][j, f_idx][None, ...],
+        #                     self.step)
 
-                elif not self.opt.disable_automasking:
-                    writer.add_image(
-                        "automask_{}/{}".format(s, j),
-                        outputs["identity_selection/{}".format(s)][j][None, ...], self.step)
+        #         elif not self.opt.disable_automasking:
+        #             writer.add_image(
+        #                 "automask_{}/{}".format(s, j),
+        #                 outputs["identity_selection/{}".format(s)][j][None, ...], self.step)
     
     def log_val(self, mode, inputs, outputs):
         """Write an event to the tensorboard events file
