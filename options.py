@@ -106,7 +106,7 @@ class MonodepthOptions:
                                  action="store_true")
         self.parser.add_argument("--pseudo_model",
                                  help="used pretrained monodepth on day for discriminator",
-                                 action="store_true")
+                                 type=str)
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",

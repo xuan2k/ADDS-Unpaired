@@ -62,11 +62,11 @@ def resnet_multiimage_input(num_layers, pretrained=False, num_input_images=1):
     return model
 
 
-class ResnetEncoder(nn.Module):
+class PretrainedResnetEncoder(nn.Module):
     """Pytorch module for a resnet encoder
     """
     def __init__(self, num_layers, pretrained, num_input_images=1):
-        super(ResnetEncoder, self).__init__()
+        super(PretrainedResnetEncoder, self).__init__()
 
         self.num_ch_enc = np.array([64, 64, 128, 256, 512])
 
@@ -101,9 +101,9 @@ class ResnetEncoder(nn.Module):
         return self.features
 
 
-class DepthDecoder(nn.Module):
+class PretrainedDepthDecoder(nn.Module):
     def __init__(self, num_ch_enc, scales=range(4), num_output_channels=1, use_skips=True):
-        super(DepthDecoder, self).__init__()
+        super(PretrainedDepthDecoder, self).__init__()
 
         self.num_output_channels = num_output_channels
         self.use_skips = use_skips

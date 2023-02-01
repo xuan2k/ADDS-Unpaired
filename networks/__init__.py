@@ -7,3 +7,4 @@ from .resnet_encoder_pose import ResnetEncoderPose
 from .feature_classifier import FeatureClassifier, NLayerDiscriminator
 from .depth_classifier import FCDiscriminator
 from .lightnet import LightNet
+from .monodepth import PretrainedResnetEncoder, PretrainedDepthDecoder
