@@ -104,6 +104,9 @@ class MonodepthOptions:
         self.parser.add_argument("--smooth_domain_label",
                                  help="if set, smooth domain label into 0.1, 0.9",
                                  action="store_true")
+        self.parser.add_argument("--pseudo_model",
+                                 help="used pretrained monodepth on day for discriminator",
+                                 action="store_true")
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",

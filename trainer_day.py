@@ -121,7 +121,7 @@ class TrainerDay:
 
         if self.use_pose_net and not self.opt.only_depth_encoder:
             if self.opt.pose_model_type == "separate_resnet":
-                self.models["pose_encoder"] = networks.ResnetEncoder_pose(
+                self.models["pose_encoder"] = networks.ResnetEncoderPose(
                     self.opt.num_layers,
                     self.opt.weights_init == "pretrained",
                     num_input_images=self.num_pose_frames)

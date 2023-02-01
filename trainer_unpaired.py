@@ -139,6 +139,28 @@ class TrainerUnpaired:
         self.models["encoder"].to(self.device)
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
+        if self.opt.pseudo_model:
+            self.pretrained_models["encoder"] = networks.monodepth.ResnetEncoder(
+                self.opt.num_layers, self.opt.weights_init == "pretrained")
+            self.pretrained_models["depth"] = networks.monodepth.DepthDecoder(
+                self.models["encoder"].num_ch_enc, self.opt.scales)
+            self.opt.pseudo_model = os.path.expanduser(self.opt.pseudo_model)
+
+            assert os.path.isdir(self.opt.pseudo_model), \
+                "Cannot find folder {}".format(self.opt.pseudo_model)
+            print("Loading depth model from: {}".format(self.opt.pseudo_model))
+
+            encoder_path = os.path.join(self.opt.pseudo_model, "encoder.pth")
+            decoder_path = os.path.join(self.opt.pseudo_model, "depth.pth")
+
+            encoder_dict = torch.load(encoder_path)
+            model_dict = self.pretrained_models["encoder"].state_dict()
+            self.pretrained_models["encoder"].encoder.load_state_dict({k.replace("encoder.", ""): v for k, v in encoder_dict.items() if k in model_dict})
+            self.pretrained_models["depth"].load_state_dict(torch.load(decoder_path))
+
+            for m in self.pretrained_models.values():
+                m.eval()
+
 
         if not self.opt.only_depth_encoder:
             self.models["depth"] = networks.DepthDecoder(
@@ -148,7 +170,7 @@ class TrainerUnpaired:
 
         if self.use_pose_net and not self.opt.only_depth_encoder:
             if self.opt.pose_model_type == "separate_resnet":
-                self.models["pose_encoder"] = networks.ResnetEncoder_pose(
+                self.models["pose_encoder"] = networks.ResnetEncoderPose(
                     self.opt.num_layers,
                     self.opt.weights_init == "pretrained",
                     num_input_images=self.num_pose_frames)
@@ -612,7 +634,13 @@ class TrainerUnpaired:
             self.generate_images_pred(night_inputs, night_outputs)
 
             if not self.opt.feature_disc:
-                day_pred = day_outputs[('disp', 0)].detach()
+                if self.opt.pseudo_model:
+                    day_feats = self.pretrained_models["encoder"](day_inputs["color_aug", 0, 0])
+                    day_outs = self.pretrained_models["depth"](day_feats)
+                    day_pred = day_outs[('disp', 0)].detach()
+                else:
+                    day_pred = day_outputs[('disp', 0)].detach()
+                    
                 night_pred = night_outputs[('disp', 0)].detach()
                 predict_day = self.discriminator["domain_classifier"](day_pred)
                 predict_night = self.discriminator["domain_classifier"](night_pred)
@@ -624,7 +652,13 @@ class TrainerUnpaired:
                 G_loss = self.domain_depth_loss(predict_day, label_source)
                 G_loss += self.domain_depth_loss(predict_night, label_target)
 
-                day_pred = day_outputs[('disp', 0)].detach()
+                if self.opt.pseudo_model:
+                    day_feats = self.pretrained_models["encoder"](day_inputs["color_aug", 0, 0])
+                    day_outs = self.pretrained_models["depth"](day_feats)
+                    day_pred = day_outs[('disp', 0)].detach()
+                else:
+                    day_pred = day_outputs[('disp', 0)].detach()
+
                 night_pred = night_outputs[('disp', 0)].detach()
                 predict_day = self.discriminator["domain_classifier"](day_pred)
                 predict_night = self.discriminator["domain_classifier"](night_pred)
@@ -676,6 +710,10 @@ class TrainerUnpaired:
 
         losses["day_depth"] = losses_day["loss"]
         losses["night_depth"] = losses_night["loss"]
+
+        if self.opt.pseudo_model:
+            losses["pretrained_sim"] = self.loss_recon1(day_outs[('disp', 0)], day_outputs[('disp', 0)])
+            loss += losses["pretrained_sim"]
 
         if self.opt.light_enhance:
             loss += loss_enhance
