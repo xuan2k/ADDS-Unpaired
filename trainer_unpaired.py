@@ -140,10 +140,12 @@ class TrainerUnpaired:
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
         if self.opt.pseudo_model:
+            self.pretrained_models = {}
             self.pretrained_models["encoder"] = networks.PretrainedResnetEncoder(
                 self.opt.num_layers, self.opt.weights_init == "pretrained")
             self.pretrained_models["depth"] = networks.PretrainedDepthDecoder(
-                self.models["encoder"].num_ch_enc, self.opt.scales)
+                self.pretrained_models["encoder"].num_ch_enc, self.opt.scales)
+
             self.opt.pseudo_model = os.path.expanduser(self.opt.pseudo_model)
 
             assert os.path.isdir(self.opt.pseudo_model), \
