@@ -142,7 +142,7 @@ class TrainerUnpaired:
         if self.opt.pseudo_model:
             self.pretrained_models = {}
             self.pretrained_models["encoder"] = networks.PretrainedResnetEncoder(
-                self.opt.num_layers, self.opt.weights_init == "pretrained")
+                self.opt.num_layers, False)
             self.pretrained_models["depth"] = networks.PretrainedDepthDecoder(
                 self.pretrained_models["encoder"].num_ch_enc, self.opt.scales)
 
@@ -157,7 +157,7 @@ class TrainerUnpaired:
 
             encoder_dict = torch.load(encoder_path)
             model_dict = self.pretrained_models["encoder"].state_dict()
-            self.pretrained_models["encoder"].encoder.load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
+            self.pretrained_models["encoder"].load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
             self.pretrained_models["depth"].load_state_dict(torch.load(decoder_path))
 
             for m in self.pretrained_models.values():
