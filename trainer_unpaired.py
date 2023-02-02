@@ -589,7 +589,8 @@ class TrainerUnpaired:
                     # day = 1, night = 0
                     label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
                     label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                    G_loss = self.domain_feat_loss(predict_day, label_source)
+                    if not self.opt.night_generator:
+                        G_loss = self.domain_feat_loss(predict_day, label_source)
                     G_loss += self.domain_feat_loss(predict_night, label_target)
 
                     day_pred = day_features[-1].detach()
@@ -613,7 +614,8 @@ class TrainerUnpaired:
                         # day = 1, night = 0
                         label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
                         label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                        G_loss = self.domain_feat_loss(predict_day, label_source)
+                        if not self.opt.night_generator:
+                            G_loss = self.domain_feat_loss(predict_day, label_source)
                         G_loss += self.domain_feat_loss(predict_night, label_target)
 
                         day_pred = day_features[-(i_layer + 1)].detach()
@@ -651,7 +653,8 @@ class TrainerUnpaired:
                 # day = 1, night = 0
                 label_source = torch.FloatTensor(predict_day.data.size()).fill_(self.source_label).to(self.device)
                 label_target = torch.FloatTensor(predict_night.data.size()).fill_(self.target_label).to(self.device)
-                G_loss = self.domain_depth_loss(predict_day, label_source)
+                if not self.opt.night_generator:
+                    G_loss = self.domain_feat_loss(predict_day, label_source)
                 G_loss += self.domain_depth_loss(predict_night, label_target)
 
                 if self.opt.pseudo_model:

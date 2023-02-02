@@ -107,6 +107,9 @@ class MonodepthOptions:
         self.parser.add_argument("--pseudo_model",
                                  help="used pretrained monodepth on day for discriminator",
                                  type=str)
+        self.parser.add_argument("--night_generator",
+                                 help="generator loss for only night image",
+                                 action="store_true")
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",
