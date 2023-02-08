@@ -159,7 +159,11 @@ class TrainerUnpaired:
             model_dict = self.pretrained_models["encoder"].state_dict()
             self.pretrained_models["encoder"].load_state_dict({k: v for k, v in encoder_dict.items() if k in model_dict})
             self.pretrained_models["depth"].load_state_dict(torch.load(decoder_path))
-
+            self.pretrained_models["encoder"].to(self.device)
+            self.pretrained_models["depth"].to(self.device)
+            
+            for m in self.pretrained_models.values():
+                m.eval()
 
         if not self.opt.only_depth_encoder:
             self.models["depth"] = networks.DepthDecoder(
@@ -445,10 +449,6 @@ class TrainerUnpaired:
             if self.opt.only_depth_encoder:
                 losses.backward()
             else:
-                if self.opt.pseudo_model:
-                    for m in self.pretrained_models.values():
-                        m.eval()
-
                 loss_G = losses + losses_day["loss"] + losses_night["loss"] + domain_loss_G
                 if self.opt.feature_disc and self.opt.num_discriminator > 0:
                     for i_layer in range(self.opt.num_discriminator):
@@ -468,9 +468,6 @@ class TrainerUnpaired:
                         param.requires_grad = True
 
                 domain_loss_D.backward()
-                if self.opt.pseudo_model:
-                    for m in self.pretrained_models.values():
-                        m.train()
 
             self.model_optimizer.step()
             self.model_optimizer_D.step()
